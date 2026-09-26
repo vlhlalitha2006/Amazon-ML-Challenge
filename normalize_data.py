@@ -14,24 +14,35 @@ def normalize_text(text):
     # Convert to lowercase
     text = text.casefold()
 
-    # Fold accents on Latin letters only. Combining marks in other scripts
-    # can be meaningful (for example, Indic vowel signs and viramas).
+    # Fold accents on Latin letters only.
+    # Combining marks in other scripts can be meaningful,
+    # for example Indic vowel signs and viramas.
     folded = []
+
     for ch in text:
         if "LATIN" in unicodedata.name(ch, ""):
             decomposed = unicodedata.normalize("NFD", ch)
+
             folded.extend(
-                part for part in decomposed
+                part
+                for part in decomposed
                 if not unicodedata.category(part).startswith("M")
             )
         else:
             folded.append(ch)
+
     text = "".join(folded)
 
-    # Replace punctuation/symbols with spaces while retaining script marks.
+    # Replace punctuation/symbols with spaces while retaining
+    # Unicode script marks.
     text = "".join(
-        " " if not (re.match(r"\w", ch, flags=re.UNICODE) or ch.isspace()
-                    or unicodedata.category(ch).startswith("M")) else ch
+        " "
+        if not (
+            re.match(r"\w", ch, flags=re.UNICODE)
+            or ch.isspace()
+            or unicodedata.category(ch).startswith("M")
+        )
+        else ch
         for ch in text
     )
 
@@ -68,6 +79,27 @@ def process_file(input_file, output_file):
 
         original_columns = reader.fieldnames
 
+        if original_columns is None:
+            raise ValueError(f"No header found in {input_file}")
+
+        required_columns = [
+            "entity_id",
+            "business_name",
+            "business_address",
+            "country"
+        ]
+
+        missing_columns = [
+            col
+            for col in required_columns
+            if col not in original_columns
+        ]
+
+        if missing_columns:
+            raise ValueError(
+                f"Missing columns in {input_file}: {missing_columns}"
+            )
+
         new_columns = original_columns + [
             "business_name_norm",
             "business_name_compact",
@@ -79,14 +111,28 @@ def process_file(input_file, output_file):
         writer = csv.DictWriter(
             outfile,
             fieldnames=new_columns,
-            delimiter="\t"
+            delimiter="\t",
+            extrasaction="ignore"
         )
 
         writer.writeheader()
 
         count = 0
+        malformed_rows = 0
 
-        for row in reader:
+        for row_number, row in enumerate(reader, start=2):
+
+            # Detect malformed TSV rows.
+            # DictReader stores extra fields under the None key.
+            if None in row:
+                malformed_rows += 1
+
+                print(
+                    f"WARNING: malformed row at line {row_number} "
+                    f"in {input_file}"
+                )
+
+                continue
 
             name = row.get("business_name", "")
             address = row.get("business_address", "")
@@ -114,7 +160,10 @@ def process_file(input_file, output_file):
                 print(f"Processed {count:,} rows")
 
     print(f"Finished: {count:,} rows")
+    print(f"Malformed rows skipped: {malformed_rows:,}")
     print(f"Output: {output_file}")
+
+    return count, malformed_rows
 
 
 if __name__ == "__main__":
@@ -132,6 +181,9 @@ if __name__ == "__main__":
         "train_source3.tsv"
     ]
 
+    total_processed = 0
+    total_malformed = 0
+
     for filename in files:
 
         input_file = TRAIN / filename
@@ -141,11 +193,16 @@ if __name__ == "__main__":
             print(f"WARNING: File not found: {input_file}")
             continue
 
-        process_file(
+        processed, malformed = process_file(
             input_file,
             output_file
         )
 
+        total_processed += processed
+        total_malformed += malformed
+
     print("\n================================")
     print("NORMALIZATION COMPLETE")
     print("================================")
+    print(f"Total processed rows: {total_processed:,}")
+    print(f"Total malformed rows: {total_malformed:,}")
